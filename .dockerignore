@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+.gemini/
+.cache/
+.config/
+Desktop/
+test_*.png
+*.tmp
+.system_generated/

@@ -1,0 +1,23 @@
+# ==============================================================================
+# Streamlit 生产部署与顶刊学术 Slate 浅色主题配置
+# ==============================================================================
+
+[theme]
+base = "light"
+primaryColor = "#0284c7"                # 学术冷调海蓝 (Cobalt Blue)
+backgroundColor = "#f8fafc"             # 浅冷灰学术基调 (Slate 50)
+secondaryBackgroundColor = "#ffffff"   # 卡片与侧边栏纯白背景 (Pure White)
+textColor = "#0f172a"                   # 严谨深灰正文字体 (Slate 900)
+font = "sans serif"
+
+[server]
+# 资源配额与长连接优化
+maxUploadSize = 200                     # 允许最大上传文件为 200MB (Origin 多通道大数据)
+enableCORS = false                      # 关闭跨域严格限制以支持容器反向代理
+enableXsrfProtection = true             # 开启跨站请求伪造保护
+address = "0.0.0.0"
+headless = true                         # 无头静默运行
+runOnSave = false                       # 生产环境禁止自动重载以节省 CPU
+
+[browser]
+gatherUsageStats = false                # 禁用遥测统计，保障学术数据隐私

@@ -1,0 +1,50 @@
+# ==============================================================================
+# Academic .gitignore for ZnBattery Stacking Platform
+# ==============================================================================
+
+# --- Python Bytecode & Environments ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+venv/
+env/
+.venv/
+.env
+
+# --- Operating System & Editor Artifacts ---
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+..*swp
+
+# --- Linux Home Environment & Shell Configs ---
+.bash*
+.profile
+.motd_shown
+.local/
+.nv/
+.landscape/
+
+# --- Temporary Caches & Tool Internals ---
+.cache/
+.config/
+.gemini/
+.system_generated/
+Desktop/
+test_*.png
+test_*.csv
+*.tmp
+*.log
+
+# --- Whitelist Essential Research Benchmark Databases ---
+!zn_battery_experiment_database.csv
+!local_research_database.csv

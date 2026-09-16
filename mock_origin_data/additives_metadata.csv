@@ -1,0 +1,9 @@
+sample_id,additive_name,smiles
+Zn_Exp_001_2,2-氨基-4-溴蒽醌-2-磺酸钠,Nc1c(S(=O)(=O)[O-])cc(Br)c2c1C(=O)c1ccccc1C2=O.[Na+]
+Zn_Exp_002_甘氨酸,甘氨酸,NCC(=O)O
+Zn_Exp_003_柠檬酸,柠檬酸,C(C(=O)O)C(CC(=O)O)(C(=O)O)O
+Zn_Exp_004_硫脲,硫脲,NC(=S)N
+Zn_Exp_005_D,D-葡萄糖,C(C1C(C(C(C(O1)O)O)O)O)O
+Zn_Exp_006_L,L-抗坏血酸,C1=C(C(=O)OC1C(CO)O)O
+Zn_Exp_007_聚乙二醇二甲醚单体,聚乙二醇二甲醚单体,COCCOC
+Zn_Exp_008_无水烟酰胺,无水烟酰胺,NC(=O)c1cccnc1

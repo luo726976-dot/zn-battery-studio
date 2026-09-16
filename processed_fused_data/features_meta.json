@@ -1,0 +1,34 @@
+{
+  "n_samples": 8,
+  "n_total_features": 24,
+  "n_molecular_features": 5,
+  "n_experimental_features": 19,
+  "molecular_features": [
+    "mol_MolWt",
+    "mol_TPSA",
+    "mol_LogP",
+    "mol_NumHDonors",
+    "mol_NumHAcceptors"
+  ],
+  "experimental_features": [
+    "cv_delta_Ep_V",
+    "cv_stripping_area_mC",
+    "cv_plating_area_mC",
+    "cv_coulombic_eff",
+    "tafel_E_corr_V",
+    "tafel_log_I_corr_A_cm2",
+    "tafel_polarization_res_ohm",
+    "xps_Zn2p_BE_shift_eV",
+    "xps_O1s_ZHS_area_ratio",
+    "xps_S2p_SO4_peak_area",
+    "raman_SO4_v1_FWHM_cm1",
+    "raman_water_hbond_area_ratio",
+    "raman_SO4_peak_shift_cm1",
+    "xrd_TC_002",
+    "xrd_I_002_to_I_101_ratio",
+    "xrd_FWHM_002_deg",
+    "sem_mean_grain_size_um",
+    "sem_surface_roughness_Ra_um",
+    "sem_dendrite_coverage_pct"
+  ]
+}
