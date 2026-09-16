@@ -48,3 +48,4 @@ test_*.csv
 # --- Whitelist Essential Research Benchmark Databases ---
 !zn_battery_experiment_database.csv
 !local_research_database.csv
+.gitconfig
