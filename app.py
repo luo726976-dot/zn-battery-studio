@@ -253,6 +253,21 @@ def trapezoid_compat(y, x):
     else:
         return np.sum((y[:-1] + y[1:]) * 0.5 * np.diff(x))
 
+
+# ==============================================================================
+# 0.1 Streamlit 响应加速缓存控制 (@st.cache_data / @st.cache_resource)
+# ==============================================================================
+@st.cache_data(ttl=3600, show_spinner=False)
+def query_pubchem_cached(query: str) -> Tuple[bool, Optional[str], str]:
+    """使用 Streamlit 缓存层隔离 PubChem 网络查询，避免前端重复请求"""
+    return PubChemResolver.query_canonical_smiles(query)
+
+@st.cache_data(show_spinner=False)
+def render_mol_svg_cached(smiles: str, width: int = 320, height: int = 180) -> Optional[str]:
+    """使用 Streamlit 缓存层加速 RDKit 2D 矢量图生成"""
+    return MultimodalDataPipeline.mol_to_svg(smiles, width, height)
+
+
 class PubChemResolver:
     """
     基于 NCBI PubChem PUG REST API 的化学物质拓扑结构检索器：
@@ -2312,7 +2327,7 @@ with st.sidebar:
 # ==============================================================================
 # 9. 主工作区: 正向性能预测与潜空间逆向设计双架构 (Dual-Engine Master Tabs)
 # ==============================================================================
-tab1, tab2, tab3, tab4 = st.tabs(["Forward Electrochemical Performance Inference", "Latent-Space Bayesian Inverse Design & Active Learning", "Multimodal Experimental Calibration & Fine-Tuning", "High-Throughput Virtual Screening"])
+tab1, tab2, tab3, tab4 = st.tabs(["正向电化学性能推演 (Forward Inference)", "潜空间贝叶斯逆向设计 (Latent-Space BO)", "多模态物理表征微调 (Multimodal Fine-Tuning)", "高通量虚拟筛选与评估 (Virtual Screening)"])
 
 with tab1:
     col_input, col_view = st.columns([10, 14], gap="medium")
@@ -2321,11 +2336,11 @@ with tab1:
         # --------------------------------------------------------------------------
         # 9.1 添加剂输入与 RDKit 拓扑提取沙箱
         # --------------------------------------------------------------------------
-        st.markdown('<div class="section-title"><span>1. Candidate Molecular Formulation & Topology Ingestion</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>1. 候选添加剂分子拓扑结构录入 (Molecular Formulation Ingestion)</span></div>', unsafe_allow_html=True)
 
         input_mode = st.radio(
-            "Additive Ingestion Protocol:",
-            ["Select from Benchmark Repository", "Custom Candidate Formulation"],
+            "添加剂录入模式 (Entry Protocol):",
+            ["从已有科研基准库选取 (Select from Benchmark)", "自由录入全新候选分子 (Custom Candidate)"],
             index=0,
             horizontal=True
         )
@@ -2346,7 +2361,7 @@ with tab1:
             sub_index = substance_options.index(prev_chosen) if prev_chosen in substance_options else 0
 
             chosen_substance = st.selectbox(
-                "Select Benchmark Additive Formulation:",
+                "选择已有添加剂物质 (Benchmark Substance):",
                 substance_options,
                 index=sub_index,
                 key="selected_db_substance"
@@ -2407,7 +2422,7 @@ with tab1:
             with col_x2:
                 st.write("")
                 st.write("")
-                btn_autocomplete = st.button("Resolve Structure via PubChem/CAS REST API", use_container_width=True, help="向 NCBI PubChem PUG REST API 发起在线结构检索")
+                btn_autocomplete = st.button("通过 PubChem/CAS API 解析结构 (Resolve via API)", use_container_width=True, help="向 NCBI PubChem PUG REST API 发起在线结构检索")
 
             if btn_autocomplete:
                 with st.spinner(f"Resolving chemical structure from NCBI PubChem REST API for '{candidate_chem_input}' 的分子拓扑..."):
@@ -2424,7 +2439,7 @@ with tab1:
 
         # SMILES 输入与沙箱校验
         smiles_input = st.text_input(
-            "SMILES Chemical Representation:",
+            "SMILES 分子拓扑结构式 (Chemical Representation):",
             key="smiles_rendered_box",
             help="由 PubChem PUG REST 自动检索提取或直接在此手动粘贴修改"
         )
@@ -2474,7 +2489,7 @@ with tab1:
         # --------------------------------------------------------------------------
         # 9.2 界面电化学实验多源特征录入 (Origin 2024b 多源文件导入与Manual Entry)
         # --------------------------------------------------------------------------
-        st.markdown('<div class="section-title"><span>2. Origin Electrochemical & Spectroscopic Experimental Data Alignment</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>2. 界面电化学与光谱表征数据对齐 (Origin 2024b Characterization Alignment)</span></div>', unsafe_allow_html=True)
         st.caption("为 CV、Tafel、XPS、Raman、XRD 独立上传 Origin 2024b 导出源文件 (.txt / .csv) 或录入带量纲的Manual Empirical Scalar：")
 
         # 数据库切换时自适应同步兜底初值
@@ -2487,11 +2502,11 @@ with tab1:
             st.session_state.fb_xrd = float(default_exp[4])
 
         tab_cv, tab_tafel, tab_xps, tab_raman, tab_xrd = st.tabs([
-            "Cyclic Voltammetry (CV)",
-            "Tafel Polarization",
-            "XPS Spectroscopy",
-            "In-situ Raman",
-            "XRD Diffraction"
+            "循环伏安测试 CV (Stripping/Plating)",
+            "Tafel 极化动力学 (Kinetics)",
+            "XPS 表面能谱 (Binding Energy)",
+            "原位拉曼光谱 Raman (Solvation)",
+            "XRD 晶面衍射 (Texture Ratio)"
         ])
 
         # 1. CV 循环伏安独立模块
@@ -2499,7 +2514,7 @@ with tab1:
             st.markdown("###### Cyclic Voltammetry (CV, Stripping/Plating)")
             st.caption("评估锌在负极界面的氧化还原活性、过电位及循环剥离沉积库伦电量。")
             file_cv = st.file_uploader(
-                "Upload Origin CV Experimental Data (.txt / .csv)",
+                "上传 Origin 循环伏安数据源 (.txt / .csv)",
                 type=["txt", "csv"],
                 key="uploader_origin_cv",
                 help="请上传从 Origin 2024b 导出的 CV 曲线双列数据 (E vs I) 或单值积分报告文件"
@@ -2517,7 +2532,7 @@ with tab1:
             if "fb_cv_input" not in st.session_state:
                 st.session_state["fb_cv_input"] = float(default_exp[0])
             cv_val_in = st.number_input(
-                "Manual Entry: CV Stripping Peak Area [mC]:",
+                "手动录入：CV 沉积剥离峰面积 (Stripping Area) [mC]:",
                 min_value=0.0,
                 max_value=10000.0,
                 step=50.0,
@@ -2535,7 +2550,7 @@ with tab1:
             st.markdown("###### Tafel Polarization Curve (HER & Corrosion Kinetics)")
             st.caption("反映锌阳极强极化区腐蚀反应阻力与析氢副反应 (HER) 动力学过电位。")
             file_tafel = st.file_uploader(
-                "Upload Origin Tafel Polarization Data (.txt / .csv)",
+                "上传 Origin Tafel 极化数据源 (.txt / .csv)",
                 type=["txt", "csv"],
                 key="uploader_origin_tafel",
                 help="请上传从 Origin 2024b 导出的强极化区极化曲线文件 (E vs log i / I)"
@@ -2553,7 +2568,7 @@ with tab1:
             if "fb_tafel_input" not in st.session_state:
                 st.session_state["fb_tafel_input"] = float(default_exp[1])
             tafel_val_in = st.number_input(
-                "Manual Entry: Tafel Polarization Slope [mV/dec]:",
+                "手动录入：Tafel 强极化区斜率 (Tafel Slope) [mV/dec]:",
                 min_value=0.0,
                 max_value=300.0,
                 step=1.0,
@@ -2571,7 +2586,7 @@ with tab1:
             st.markdown("###### X-ray Photoelectron Spectroscopy (XPS Binding Energy Shift)")
             st.caption("反映添加剂与锌表面原子的配位吸附强度及 Zn 2p 轨道结合能化学位移偏移量。")
             file_xps = st.file_uploader(
-                "Upload Origin XPS Spectroscopy Data (.txt / .csv)",
+                "上传 Origin XPS 能谱数据源 (.txt / .csv)",
                 type=["txt", "csv"],
                 key="uploader_origin_xps",
                 help="请上传从 Origin 2024b 导出的结合能 (eV) 与计数强度数据"
@@ -2589,7 +2604,7 @@ with tab1:
             if "fb_xps_input" not in st.session_state:
                 st.session_state["fb_xps_input"] = float(default_exp[2])
             xps_val_in = st.number_input(
-                "Manual Entry: XPS Binding Energy Shift [eV]:",
+                "手动录入：XPS 结合能化学位移量 (BE Shift) [eV]:",
                 min_value=0.0,
                 max_value=5.0,
                 step=0.02,
@@ -2607,7 +2622,7 @@ with tab1:
             st.markdown("###### In-situ Raman Spectroscopy (Solvation Sheath & Anion Pairing)")
             st.caption("反映添加剂对水合锌离子 [Zn(H₂O)₆]²⁺ 溶剂化鞘层中水分氢键网络的破坏与重构程度。")
             file_raman = st.file_uploader(
-                "Upload Origin Raman Spectroscopy Data (.txt / .csv)",
+                "上传 Origin Raman 拉曼分峰数据源 (.txt / .csv)",
                 type=["txt", "csv"],
                 key="uploader_origin_raman",
                 help="请上传从 Origin 2024b 导出的拉曼位移 (cm⁻¹) 与散射强度数据"
@@ -2678,7 +2693,7 @@ with tab1:
 
         # 连续测试添加量滑块
         conc_in = st.slider(
-            " 电解液添加剂测试添加量 [wt%]:",
+            "目标配方质量分数 (Mass Fraction) [wt%]:",
             min_value=0.5,
             max_value=2.5,
             value=1.5,
@@ -2797,13 +2812,13 @@ with tab1:
         # 9.4 本地科研数据库一键归档组件 (Persistence Create / Append)
         # --------------------------------------------------------------------------
         st.divider()
-        st.markdown("##### Local Research Database Master Ledger (ACID Compliant)")
+        st.markdown("##### 本地科研数据库主账本归档 (ACID Compliant Database Journal)")
         st.caption("将当前分子化学拓扑、5 维 Origin 界面特征及预测/实测寿命安全追加写入本地主账本 `local_research_database.csv`。")
 
         c_arch_btn, c_arch_tip = st.columns([3, 2])
         with c_arch_btn:
             btn_archive = st.button(
-                "Commit Current Formulation to Local Database",
+                "归档当前配方至本地主账本 (Commit Formulation to Database)",
                 type="primary",
                 use_container_width=True,
                 help="原子性写入 local_research_database.csv 并自动刷新系统状态，实现长周期实验数据沉淀"
@@ -2870,7 +2885,7 @@ with tab1:
         # 10.1 Tab 1: 异构堆叠循环寿命预测
         # --------------------------------------------------------------------------
         with tab_pred:
-            st.markdown('<div class="section-title"><span>Heterogeneous Stacking Inference & Validation</span></div>', unsafe_allow_html=True)
+            st.markdown('<div class="section-title"><span>异构堆叠循环寿命正向推演 (Stacking Inference)</span></div>', unsafe_allow_html=True)
         
             if scaled_sample_vec is None:
                 st.markdown("""
@@ -2890,7 +2905,7 @@ with tab1:
                         st.metric("XGBoost 循环寿命预测", f"{preds['XGB_Pred']} h", help="界面物理标量决策树分支")
                     with p_c3:
                         st.metric(
-                            "Stacking 循环寿命预测 (终值)",
+                            "预测循环寿命 (Capacity Retention > 80%) [h]",
                             f"{preds['Stacking_Pred']} h",
                             delta=f"{round(preds['Stacking_Pred'] - preds['XGB_Pred'], 1)} h",
                             help="基于 5-Fold OOF 非负元学习器二次无偏融合输出"
@@ -3158,7 +3173,7 @@ with tab1:
                 st.toast("已重新从磁盘加载主账本！", icon="")
                 st.rerun()
         with c_crud_top4:
-            if st.button("Retrain Ensemble on Updated Ledger", type="primary", use_container_width=True, help="基于当前账本数据重新执行 5 折交叉验证 Stacking 拟合"):
+            if st.button("依据最新账本重新训练模型 (Retrain Ensemble on Ledger)", type="primary", use_container_width=True, help="基于当前账本数据重新执行 5 折交叉验证 Stacking 拟合"):
                 with st.spinner("正在基于最新主账本重新提取特征并执行 5 折 Stacking 训练..."):
                     X_scaled, y, scaler_mol, scaler_exp, col_map, missing_cols = MultimodalDataPipeline.parse_and_standardize_dataset(st.session_state.local_db_df)
                     st.session_state.X_scaled = X_scaled
@@ -3217,7 +3232,7 @@ with tab2:
 
     with inv_c_left:
         # 1. Coating Matrix / Binder System
-        st.markdown('<div class="section-title"><span>1. Polymer Coating Matrix / Binder System</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>1. 固态涂层基底与粘结剂体系 (Coating Matrix / Binder System)</span></div>', unsafe_allow_html=True)
         binder_options = [
             "PVDF (Polyvinylidene Fluoride)",
             "CMC (Sodium Carboxymethyl Cellulose)",
@@ -3234,11 +3249,11 @@ with tab2:
             help="Specifies the polymer matrix for the artificial solid electrolyte interphase (SEI) or electrode binder."
         )
 
-        st.markdown('<div class="section-title" style="margin-top:14px;"><span>2. Candidate Additive Formulation & Latent Extraction</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title" style="margin-top:14px;"><span>2. 候选添加剂分子录入与潜空间特征截取 (Molecular Ingestion & Latent Extraction)</span></div>', unsafe_allow_html=True)
 
         input_mode_inv = st.radio(
             "Candidate Ingestion Protocol:",
-            ["Select from Benchmark Repository", "Custom Candidate Formulation"],
+            ["从已有科研基准库选取 (Select from Benchmark)", "自由录入全新候选分子 (Custom Candidate)"],
             index=0,
             horizontal=True,
             key="radio_input_mode_inv"
@@ -3258,7 +3273,7 @@ with tab2:
             sub_index_inv = substance_options_inv.index(prev_chosen_inv) if prev_chosen_inv in substance_options_inv else 0
 
             chosen_substance_inv = st.selectbox(
-                "Select Benchmark Additive Formulation:",
+                "选择已有添加剂物质 (Benchmark Substance):",
                 substance_options_inv,
                 index=sub_index_inv,
                 key="selected_db_substance_inv"
@@ -3282,7 +3297,7 @@ with tab2:
             col_x1_inv, col_x2_inv = st.columns([3, 1])
             with col_x1_inv:
                 candidate_chem_inv = st.text_input(
-                    "Candidate Chemical Name / IUPAC / CAS Registry Number:",
+                    "候选分子化学名称 / IUPAC / CAS 登记号 (Chemical Name / CAS):",
                     value="4,4'-Difluorobenzophenone",
                     key="text_cas_inv",
                     help="Supports international chemical names, IUPAC nomenclature, or standard CAS numbers (e.g. 56-40-6)"
@@ -3312,7 +3327,7 @@ with tab2:
             st.session_state["inv_additive_name"] = inv_default_name
 
         inv_smi_input = st.text_input(
-            "SMILES Chemical Representation:",
+            "SMILES 分子拓扑结构式 (Chemical Representation):",
             key="smiles_box_inv",
             help="Extracted from benchmark repository, resolved from PubChem, or entered manually."
         )
@@ -3366,11 +3381,11 @@ with tab2:
         </div>
         """, unsafe_allow_html=True)
 
-        st.markdown('<div class="section-title" style="margin-top:16px;"><span>3. Process Search Space Bounds & Acquisition Strategy</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title" style="margin-top:16px;"><span>3. 宏观工艺参数搜索边界与采集策略设定 (Search Bounds & Acquisition Strategy)</span></div>', unsafe_allow_html=True)
         st.caption("Define the hyper-rectangle domain for continuous macro-process optimization:")
 
         bound_wt = st.slider(
-            "Coating Mass Fraction [wt%]:",
+            "目标配方质量分数 (Mass Fraction) [wt%]:",
             min_value=0.5,
             max_value=2.5,
             value=(0.8, 2.0),
@@ -3378,7 +3393,7 @@ with tab2:
             help="Solid mass fraction of the protective coating layer."
         )
         bound_conc = st.slider(
-            "Optimal Electrolyte Concentration [mM]:",
+            "最优电解液浓度 (Optimal Concentration) [mM]:",
             min_value=0.1,
             max_value=50.0,
             value=(2.0, 30.0),
@@ -3386,7 +3401,7 @@ with tab2:
             help="Electrolyte additive concentration search boundary."
         )
         bound_curr = st.slider(
-            "Electrochemical Testing Current Density [mA/cm²]:",
+            "电化学测试电流密度 (Testing Current Density) [mA/cm²]:",
             min_value=0.5,
             max_value=10.0,
             value=(1.0, 5.0),
@@ -3394,7 +3409,7 @@ with tab2:
             help="Galvanostatic cycling current density regime."
         )
 
-        st.markdown('<div class="section-title" style="margin-top:16px;"><span>4. Bayesian Acquisition Strategy</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title" style="margin-top:16px;"><span>4. 贝叶斯采集策略与多目标优化配置 (Acquisition Strategy)</span></div>', unsafe_allow_html=True)
         opt_strategy = st.radio(
             "Acquisition Function & Optimization Objective:",
             [
@@ -3405,7 +3420,7 @@ with tab2:
             help="q-EI maximizes predicted cycle life; q-EHVI resolves the Pareto frontier between lifespan and overpotential suppression."
         )
 
-        btn_run_inv = st.button("Execute Latent Bayesian Optimization", type="primary", use_container_width=True)
+        btn_run_inv = st.button("执行潜空间贝叶斯逆向寻优 (Execute Latent Bayesian Optimization)", type="primary", use_container_width=True)
 
     with inv_c_right:
         if btn_run_inv:
@@ -3482,13 +3497,13 @@ with tab2:
 
             r_c1, r_c2, r_c3, r_c4 = st.columns(4)
             with r_c1:
-                st.metric("Coating Mass Fraction [wt%]", f"{res['opt_wt']:.2f} wt%")
+                st.metric("目标配方质量分数 (Mass Fraction) [wt%]", f"{res['opt_wt']:.2f} wt%")
             with r_c2:
-                st.metric("Optimal Electrolyte Concentration [mM]", f"{res['opt_conc']:.1f} mM")
+                st.metric("最优电解液浓度 (Optimal Concentration) [mM]", f"{res['opt_conc']:.1f} mM")
             with r_c3:
-                st.metric("Recommended Current Density [mA/cm²]", f"{res['opt_curr']:.1f} mA/cm²")
+                st.metric("推荐测试电流密度 (Testing Current Density) [mA/cm²]", f"{res['opt_curr']:.1f} mA/cm²")
             with r_c4:
-                st.metric("Predicted Cycle Life (Capacity Retention > 80%) [h]", f"{res['pred_life']:.1f} h", delta=f"±{1.96*res['pred_life_std']:.1f} h (95% CI)")
+                st.metric("预测循环寿命 (Capacity Retention > 80%) [h]", f"{res['pred_life']:.1f} h", delta=f"±{1.96*res['pred_life_std']:.1f} h (95% CI)")
 
             # 3D Response Surface Plot
             fig_3d = BoTorchLatentInverseOptimizer.render_3d_response_surface(
@@ -3565,28 +3580,28 @@ with tab2:
     # Core Goal 2: Closed-Loop Active Learning & Empirical Feedback Ingestion Engine
     # ==============================================================================
     st.divider()
-    st.markdown('<div class="section-title"><span>5. Closed-Loop Active Learning & Empirical Feedback Ingestion</span></div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title"><span>5. 真实实验数据反馈录入与闭环主动学习 (Closed-Loop Active Learning)</span></div>', unsafe_allow_html=True)
     st.caption("Ingest empirical wet-lab measurements to dynamically calibrate Gaussian process posterior covariance, eliminate epistemic uncertainty, and re-recommend optimal formulation parameters.")
 
     col_fb_form, col_fb_hist = st.columns([11, 13], gap="large")
 
     with col_fb_form:
-        st.markdown("##### Empirical Observation Ingestion Form")
+        st.markdown("##### 真实实验数据反馈录入 (Experimental Feedback)")
         with st.form("active_learning_feedback_form"):
             fb_c1, fb_c2 = st.columns(2)
             with fb_c1:
-                fb_name = st.text_input("Evaluated Formulation Name:", value=inv_additive_name, key="al_input_name")
-                fb_smi = st.text_input("Evaluated SMILES Topology:", value=inv_smi_input, key="al_input_smi")
-                fb_binder = st.selectbox("Evaluated Binder System:", binder_options, index=binder_options.index(binder_choice) if binder_choice in binder_options else 0, key="al_input_binder")
-                fb_wt = st.number_input("Tested Coating Mass Fraction [wt%]:", min_value=0.1, max_value=5.0, value=float(res['opt_wt']) if 'res' in locals() else 1.20, step=0.05, key="al_input_wt")
+                fb_name = st.text_input("评估配方添加剂名称 (Evaluated Molecule Name):", value=inv_additive_name, key="al_input_name")
+                fb_smi = st.text_input("SMILES 拓扑结构式 (Evaluated SMILES):", value=inv_smi_input, key="al_input_smi")
+                fb_binder = st.selectbox("测试聚合物基底体系 (Coating Matrix / Binder):", binder_options, index=binder_options.index(binder_choice) if binder_choice in binder_options else 0, key="al_input_binder")
+                fb_wt = st.number_input("目标配方质量分数 (Mass Fraction) [wt%]:", min_value=0.1, max_value=5.0, value=float(res['opt_wt']) if 'res' in locals() else 1.20, step=0.05, key="al_input_wt")
             with fb_c2:
-                fb_conc = st.number_input("Tested Electrolyte Concentration [mM]:", min_value=0.1, max_value=100.0, value=float(res['opt_conc']) if 'res' in locals() else 15.0, step=0.5, key="al_input_conc")
-                fb_curr = st.number_input("Tested Current Density [mA/cm²]:", min_value=0.2, max_value=20.0, value=float(res['opt_curr']) if 'res' in locals() else 2.0, step=0.5, key="al_input_curr")
-                fb_life = st.number_input("Measured Cycle Life (Capacity Retention > 80%) [h]:", min_value=10.0, max_value=10000.0, value=1350.0, step=10.0, key="al_input_life")
-                fb_overpot = st.number_input("Measured Overpotential at Stripping/Plating [mV]:", min_value=5.0, max_value=500.0, value=42.0, step=1.0, key="al_input_overpot")
-            fb_notes = st.text_input("Electrochemical Assembly & Characterization Notes:", value="Empirical validation batch: Dendrite-free Zn stripping confirmed", key="al_input_notes")
+                fb_conc = st.number_input("最优电解液浓度 (Optimal Concentration) [mM]:", min_value=0.1, max_value=100.0, value=float(res['opt_conc']) if 'res' in locals() else 15.0, step=0.5, key="al_input_conc")
+                fb_curr = st.number_input("测试施加电流密度 (Applied Current Density) [mA/cm²]:", min_value=0.2, max_value=20.0, value=float(res['opt_curr']) if 'res' in locals() else 2.0, step=0.5, key="al_input_curr")
+                fb_life = st.number_input("实测循环寿命 (Measured Cycle Life, Capacity Retention > 80%) [h]:", min_value=10.0, max_value=10000.0, value=1350.0, step=10.0, key="al_input_life")
+                fb_overpot = st.number_input("实测锌剥离沉积过电位 (Measured Overpotential) [mV]:", min_value=5.0, max_value=500.0, value=42.0, step=1.0, key="al_input_overpot")
+            fb_notes = st.text_input("实验电芯装配与表征备注文档 (Assembly & Testing Notes):", value="Empirical validation batch: Dendrite-free Zn stripping confirmed", key="al_input_notes")
 
-            btn_submit_al = st.form_submit_button("Submit Empirical Observation & Calibrate Posterior GP", type="primary", use_container_width=True)
+            btn_submit_al = st.form_submit_button("提交真实实验数据并在线校准高斯过程后验 (Submit Feedback & Update Posterior)", type="primary", use_container_width=True)
 
         if btn_submit_al:
             with st.spinner("Augmenting latent training tensors and recalibrating Gaussian Process posterior covariance..."):
@@ -3665,21 +3680,21 @@ with tab2:
         st.markdown(f"""
         <div style="background-color: #f8fafc; border-left: 4px solid #003366; border: 1px solid #cbd5e1; border-radius: 4px; padding: 14px 18px; margin: 16px 0;">
             <span style="font-size: 1.02rem; font-weight: 700; color: #003366;">
-                Model updated with {n_obs} observations. Calibrating posterior covariance... Next strictly optimal condition recommended:
+                已结合 {n_obs} 组真实实验观测值完成高斯过程后验更新。下一轮全局最优实验条件推荐如下：
             </span>
         </div>
         """, unsafe_allow_html=True)
 
         c_al1, c_al2, c_al3, c_al4 = st.columns(4)
         with c_al1:
-            st.metric("Coating Mass Fraction [wt%]", f"{re_res['opt_wt']:.2f} wt%")
+            st.metric("目标配方质量分数 (Mass Fraction) [wt%]", f"{re_res['opt_wt']:.2f} wt%")
         with c_al2:
-            st.metric("Optimal Electrolyte Concentration [mM]", f"{re_res['opt_conc']:.1f} mM")
+            st.metric("最优电解液浓度 (Optimal Concentration) [mM]", f"{re_res['opt_conc']:.1f} mM")
         with c_al3:
-            st.metric("Recommended Current Density [mA/cm²]", f"{re_res['opt_curr']:.1f} mA/cm²")
+            st.metric("推荐测试电流密度 (Testing Current Density) [mA/cm²]", f"{re_res['opt_curr']:.1f} mA/cm²")
         with c_al4:
             st.metric(
-                "Calibrated Predicted Cycle Life [h]",
+                "预测循环寿命 (Capacity Retention > 80%) [h]",
                 f"{re_res['pred_life']:.1f} h",
                 delta=f"±{1.96*re_res['pred_life_std']:.1f} h (95% CI)"
             )
@@ -3723,13 +3738,13 @@ with tab2:
 
 
 with tab3:
-    st.markdown("### Multimodal Experimental Calibration & Fine-Tuning")
+    st.markdown("### 多模态物理表征微调与电化学特征融合 (Multimodal Fine-Tuning)")
     st.caption("Cross-scale feature fusion of microscopic graph topology (2048D ECFP4) and macroscopic Origin experimental metrics (XRD / Raman / XPS / CV / Tafel, 5D).")
 
     col_ft_left, col_ft_right = st.columns([10, 14], gap="large")
 
     with col_ft_left:
-        st.markdown('<div class="section-title"><span>1. Target Molecular Topology & Experimental Characterization Ingestion</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>1. 目标分子结构与宏观实验表征参数录入 (Target Molecule & Characterization Data)</span></div>', unsafe_allow_html=True)
 
         ft_preset = st.selectbox(
             "Select Benchmark Formulation Template:",
@@ -3778,7 +3793,7 @@ with tab3:
         else:
             st.error(f"SMILES resolution failed: {ft_err or 'Invalid chemical syntax'}")
 
-        st.markdown('<div class="section-title"><span>2. Origin Characterization & Electrochemical Parameters</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>2. Origin 物理/光谱拟合参数 (Spectroscopic & Electrochemical Parameters)</span></div>', unsafe_allow_html=True)
         st.caption("Input experimental characterization metrics fitted via Origin:")
 
         ft_col_a, ft_col_b = st.columns(2)
@@ -3815,10 +3830,10 @@ with tab3:
                 help="Anodic Tafel polarization slope characterizing corrosion and HER kinetics."
             )
 
-        btn_run_ft = st.button("Execute Multimodal Calibration & Inference", key="btn_run_ft", type="primary", use_container_width=True)
+        btn_run_ft = st.button("执行多模态物理表征融合微调 (Execute Multimodal Calibration)", key="btn_run_ft", type="primary", use_container_width=True)
 
     with col_ft_right:
-        st.markdown('<div class="section-title"><span>3. Calibrated Inference Evaluation & Multimodal Attribution</span></div>', unsafe_allow_html=True)
+        st.markdown('<div class="section-title"><span>3. 多模态微调推理评估与物理贡献解构 (Calibrated Inference & Physics Attribution)</span></div>', unsafe_allow_html=True)
 
         if not ft_mol_succ or ft_fp_arr is None:
             st.warning("Please specify a valid candidate SMILES structure before executing calibration.")
@@ -3865,13 +3880,13 @@ with tab3:
                 col_c1, col_c2, col_c3 = st.columns(3)
                 with col_c1:
                     st.metric(
-                        label="Calibrated Predicted Cycle Life [h]",
+                        label="预测循环寿命 (Capacity Retention > 80%) [h]",
                         value=f"{ft_life:.1f} h",
                         delta=f"{delta_life:+.1f} h ({delta_pct:+.1f}%)"
                     )
                 with col_c2:
                     st.metric(
-                        label="Pure Molecular Baseline [h]",
+                        label="纯分子无物理基准 (Pure Topology Baseline) [h]",
                         value=f"{base_life:.1f} h",
                         help="Baseline prediction using 2048D graph topology with zero-mean physical descriptors."
                     )
@@ -3943,7 +3958,7 @@ PyTorch MLP Mode        : eval() | torch.no_grad() | CPU Memory-Safe
 
 
 with tab4:
-    st.markdown("### High-Throughput Virtual Screening")
+    st.markdown("### 高通量虚拟筛选与分子库评估引擎 (High-Throughput Virtual Screening)")
     st.caption("Vectorized batch screening engine for candidate molecular repositories with single-pass forward inference.")
 
     col_up, col_action = st.columns([16, 8], gap="medium")
@@ -3957,7 +3972,7 @@ with tab4:
 
     with col_action:
         st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-        btn_load_demo = st.button("Load 20-Candidate Benchmark Library", key="btn_load_demo_batch", use_container_width=True)
+        btn_load_demo = st.button("加载 20 组测试候选分子库 (Load 20-Candidate Benchmark)", key="btn_load_demo_batch", use_container_width=True)
 
     if "batch_df" not in st.session_state:
         st.session_state.batch_df = None
@@ -4004,7 +4019,7 @@ with tab4:
             with st.expander("Candidate Repository Preview (First 5 Rows)", expanded=False):
                 st.dataframe(df_current_batch.head(5), use_container_width=True)
 
-            btn_do_screen = st.button("Execute Batch Vectorized Virtual Screening", key="btn_do_batch_screening", type="primary", use_container_width=True)
+            btn_do_screen = st.button("启动工业级全向量化批量筛选 (Execute Batch Virtual Screening)", key="btn_do_batch_screening", type="primary", use_container_width=True)
 
             if btn_do_screen:
                 stacking_model = st.session_state.stacking_ensemble
@@ -4177,7 +4192,7 @@ with tab4:
 
                 csv_bytes = df_res.to_csv(index=False).encode("utf-8-sig")
                 st.download_button(
-                    label="Export Screening Results Registry (CSV)",
+                    label="导出完整高通量筛选排行榜 (Export Screening Registry CSV)",
                     data=csv_bytes,
                     file_name=f"ZnBattery_VirtualScreening_Results_{time.strftime('%Y%m%d_%H%M%S')}.csv",
                     mime="text/csv",
