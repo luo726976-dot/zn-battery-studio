@@ -54,6 +54,7 @@ import shap
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import streamlit as st
+import streamlit.components.v1 as components
 
 # RDKit 分子化学与高维指纹计算
 import rdkit
@@ -508,6 +509,39 @@ class MultimodalDataPipeline:
             return True, feats, None
         except Exception as e:
             return False, None, f"RDKit 底层计算异常: {str(e)}"
+
+    @staticmethod
+    def mol_to_svg(mol_or_smiles: Union[str, Any], width: int = 320, height: int = 200) -> Optional[str]:
+        """
+        使用 RDKit Draw.rdMolDraw2D.MolDraw2DSVG 矢量渲染分子拓扑图
+        内建自动 2D 坐标生成与两级异常容错降级保护机制
+        """
+        if mol_or_smiles is None:
+            return None
+        try:
+            if isinstance(mol_or_smiles, str):
+                smi = mol_or_smiles.strip()
+                if not smi:
+                    return None
+                mol = Chem.MolFromSmiles(smi)
+            else:
+                mol = mol_or_smiles
+
+            if mol is None:
+                return None
+
+            drawer = Draw.rdMolDraw2D.MolDraw2DSVG(width, height)
+            opts = drawer.drawOptions()
+            opts.clearBackground = True
+            try:
+                Draw.rdMolDraw2D.PrepareAndDrawMolecule(drawer, mol)
+            except Exception:
+                drawer.DrawMolecule(mol)
+            drawer.FinishDrawing()
+            svg = drawer.GetDrawingText()
+            return svg
+        except Exception:
+            return None
 
     @staticmethod
     def generate_high_fidelity_benchmark_data() -> pd.DataFrame:
@@ -1391,11 +1425,21 @@ with col_input:
     with c_mol_img:
         if smi_valid:
             try:
-                mol = Chem.MolFromSmiles(smiles_input.strip())
-                img = Draw.MolToImage(mol, size=(300, 200))
-                st.image(img, caption=f"{default_name} 2D 化学拓扑骨架", use_container_width=True)
-            except Exception:
-                st.caption("分子图像渲染跳过")
+                # 矢量化渲染：使用 Draw.rdMolDraw2D.MolDraw2DSVG 替代低分辨率 PIL 位图
+                svg_content = MultimodalDataPipeline.mol_to_svg(smiles_input.strip(), width=320, height=200)
+                if svg_content:
+                    # 优先使用 st.image 渲染 SVG，若环境受限则优雅降级为 st.components.v1.html DOM 注入
+                    try:
+                        st.image(svg_content, caption=f"{default_name} 2D 化学拓扑骨架 (SVG 矢量)", use_container_width=True)
+                    except Exception:
+                        components.html(
+                            f"<div style='display:flex;justify-content:center;align-items:center;background:#ffffff;border:1px solid #e2e8f0;border-radius:6px;padding:8px;'>{svg_content}</div>",
+                            height=215
+                        )
+                else:
+                    st.caption("分子图像渲染跳过: 无法生成拓扑坐标")
+            except Exception as e:
+                st.caption(f"分子图像渲染跳过: {str(e)}")
         else:
             # 局部警告卡片 (绝不全屏崩溃)
             st.markdown(f"""
