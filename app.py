@@ -1073,6 +1073,41 @@ class HeterogeneousStackingEnsemble:
             "XGB_Pred": round(max(50.0, pred_xgb), 1)
         }
 
+    def predict_batch(self, x_fused_batch: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        高通量批量矩阵前向推理 (N, 2053)：
+        单次前向传播全向量化并行预测，严格杜绝任何 for 循环单条调用，保障 CPU 内存安全与极致吞吐。
+        """
+        if not self.is_trained:
+            raise RuntimeError("Stacking 模型尚未完成训练！")
+
+        if x_fused_batch.ndim == 1:
+            x_fused_batch = x_fused_batch.reshape(1, -1)
+
+        # 1. PyTorch MLP 向量化批量前向推理 (CPU + torch.no_grad())
+        self.full_mlp.eval()
+        with torch.no_grad():
+            t_in = torch.tensor(x_fused_batch, dtype=torch.float32, device=BOTORCH_DEVICE)
+            pred_mlp_norm = self.full_mlp(t_in).cpu().numpy().flatten()
+            pred_mlp = pred_mlp_norm * self.y_std + self.y_mean
+
+        # 2. XGBoost 批量降维与前向预测
+        x_mol_svd = self.svd.transform(x_fused_batch[:, :ECFP4_N_BITS])
+        x_xgb = np.column_stack([x_mol_svd, x_fused_batch[:, ECFP4_N_BITS:]]).astype(np.float32)
+        pred_xgb = self.full_xgb.predict(x_xgb).flatten()
+
+        # 3. 单纯形凸组合概率集成
+        pred_stack = self.norm_weights[0] * pred_mlp + self.norm_weights[1] * pred_xgb
+        pred_stack = np.maximum(50.0, pred_stack)
+        pred_mlp = np.maximum(50.0, pred_mlp)
+        pred_xgb = np.maximum(50.0, pred_xgb)
+
+        return {
+            "Stacking_Pred": np.round(pred_stack, 1),
+            "MLP_Pred": np.round(pred_mlp, 1),
+            "XGB_Pred": np.round(pred_xgb, 1)
+        }
+
 
 # ==============================================================================
 # 4. 模块 3: 物理-化学双视角 SHAP 可解释性归因 (Dual-Perspective SHAP)
@@ -1716,7 +1751,7 @@ with st.sidebar:
 # ==============================================================================
 # 9. 主工作区: 正向性能预测与潜空间逆向设计双架构 (Dual-Engine Master Tabs)
 # ==============================================================================
-tab1, tab2 = st.tabs(["🧪 正向性能预测", "🎯 潜空间逆向设计 (BoTorch)"])
+tab1, tab2, tab3, tab4 = st.tabs(["🧪 单分子正向预测", "🎯 潜空间逆向设计", "🔬 多模态表征微调", "🏭 工业级高通量批处理"])
 
 with tab1:
     col_input, col_view = st.columns([10, 14], gap="medium")
@@ -2959,6 +2994,488 @@ with tab2:
                 st.plotly_chart(fig_unc, use_container_width=True)
         else:
             st.info("👈 请在左侧配置目标添加剂分子与宏观工艺边界，点击【🚀 启动高维参数寻优】启动 BoTorch 潜空间贝叶斯逆向设计。")
+
+
+# ==============================================================================
+# 10. Tab 3: 多模态物理化学特征融合与微调 (Multimodal Fine-Tuning Engine)
+# ==============================================================================
+with tab3:
+    st.markdown("### 🔬 多模态表征微调与电化学-拓扑特征融合 (Multimodal Fine-Tuning)")
+    st.caption("融合微观分子拓扑图结构（ECFP4，2048 维）与宏观电化学/光谱实验表征拟合参数（XRD / Raman / XPS / CV / Tafel，5 维），实现跨尺度特征动态微调校准。")
+
+    col_ft_left, col_ft_right = st.columns([10, 14], gap="large")
+
+    with col_ft_left:
+        st.markdown('<div class="section-title"><span>🧪 1. 目标分子结构与宏观实验表征参数录入</span></div>', unsafe_allow_html=True)
+
+        ft_preset = st.selectbox(
+            "选择或预填添加剂分子模板：",
+            [
+                "硫脲 (Thiourea) - 典型极性含硫吸附分子",
+                "柠檬酸 (Citric Acid) - 多羟基羧酸强螯合剂",
+                "甘氨酸 (Glycine) - 两性离子缓冲添加剂",
+                "甜菜碱 (Betaine) - 季铵两性离子界面分子",
+                "D-葡萄糖 (D-Glucose) - 多羟基非离子溶剂化分子",
+                "自定义自由输入全新分子 SMILES"
+            ],
+            index=0,
+            key="ft_preset_select"
+        )
+
+        preset_smi_map = {
+            "硫脲 (Thiourea) - 典型极性含硫吸附分子": "NC(=S)N",
+            "柠檬酸 (Citric Acid) - 多羟基羧酸强螯合剂": "C(C(=O)O)C(CC(=O)O)(C(=O)O)O",
+            "甘氨酸 (Glycine) - 两性离子缓冲添加剂": "NCC(=O)O",
+            "甜菜碱 (Betaine) - 季铵两性离子界面分子": "C[N+](C)(C)CC(=O)[O-]",
+            "D-葡萄糖 (D-Glucose) - 多羟基非离子溶剂化分子": "C(C1C(C(C(C(O1)O)O)O)O)O",
+            "自定义自由输入全新分子 SMILES": "NC(=S)N"
+        }
+        default_ft_smi = preset_smi_map.get(ft_preset, "NC(=S)N")
+
+        ft_smiles_input = st.text_input(
+            "目标添加剂 SMILES 表达式：",
+            value=default_ft_smi,
+            key="ft_smiles_input",
+            help="输入代表候选添加剂二维拓扑化学结构的 SMILES 字符串"
+        )
+
+        # 2D 拓扑结构预览
+        ft_smi_clean = ft_smiles_input.strip()
+        ft_mol_succ, ft_fp_arr, ft_err = MultimodalDataPipeline.extract_ecfp4_fingerprint(ft_smi_clean)
+
+        if ft_mol_succ and ft_fp_arr is not None:
+            svg_ft = MultimodalDataPipeline.mol_to_svg(ft_smi_clean, width=320, height=160)
+            if svg_ft:
+                st.components.v1.html(
+                    f'<div style="display:flex; justify-content:center; align-items:center; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:4px;">{svg_ft}</div>',
+                    height=180
+                )
+            active_on_bits = int(np.sum(ft_fp_arr))
+            st.caption(f"✅ RDKit 拓扑图解析成功 | ECFP4 激活比特数 (On-Bits): `{active_on_bits}/2048`")
+        else:
+            st.error(f"❌ SMILES 解析失败: {ft_err or '非法的化学语法'}")
+
+        st.markdown('<div class="section-title"><span>🔬 2. Origin 拟合实验物理/光谱表征参数</span></div>', unsafe_allow_html=True)
+        st.caption("录入由 Origin 软件拟合导出的关键物理化学参数：")
+
+        ft_col_a, ft_col_b = st.columns(2)
+        with ft_col_a:
+            ft_xrd = st.number_input(
+                "XRD (002)/(101) 晶面强度比:",
+                min_value=0.10, max_value=10.00, value=2.10, step=0.05,
+                key="ft_xrd_input",
+                help="XRD (002)/(101) 晶面相对取向强度比，反映锌在外延生长平整沉积趋势"
+            )
+            ft_raman = st.number_input(
+                "Raman 拟合峰面积 / Shift (a.u.):",
+                min_value=100.0, max_value=5000.0, value=1650.0, step=25.0,
+                key="ft_raman_input",
+                help="拉曼特征峰面积比/偏移，灵敏反映配位溶剂化鞘层结构变化"
+            )
+            ft_xps = st.number_input(
+                "XPS 结合能偏移 (eV):",
+                min_value=0.01, max_value=3.00, value=0.35, step=0.01,
+                key="ft_xps_input",
+                help="XPS 结合能位移/峰面积比，定量添加剂与活性 Zn 负极的化学吸附结合能"
+            )
+        with ft_col_b:
+            ft_cv = st.number_input(
+                "CV 剥离峰面积 / 成核电量 (mC):",
+                min_value=200.0, max_value=10000.0, value=3000.0, step=50.0,
+                key="ft_cv_input",
+                help="CV 循环伏安峰面积，直接关联锌溶解成核库仑效率与过电位"
+            )
+            ft_tafel = st.number_input(
+                "Tafel 极化斜率 (mV/dec):",
+                min_value=10.0, max_value=250.0, value=72.0, step=1.0,
+                key="ft_tafel_input",
+                help="Tafel 极化斜率 / 腐蚀电流密度，反映锌界面析氢与腐蚀活化反应能垒"
+            )
+
+        btn_run_ft = st.button("🚀 执行多模态物理特征融合与模型微调", key="btn_run_ft", type="primary", use_container_width=True)
+
+    with col_ft_right:
+        st.markdown('<div class="section-title"><span>⚡ 3. 多模态微调推理评估与增益解构</span></div>', unsafe_allow_html=True)
+
+        if not ft_mol_succ or ft_fp_arr is None:
+            st.warning("⚠️ 请在左侧输入有效的分子 SMILES 结构式后再执行微调。")
+        else:
+            # 1. 提取 2048 维指纹
+            fp_arr = ft_fp_arr.astype(np.float32)
+
+            # 2. 5 个物理表征参数标准化缩放 (Z-Score)
+            raw_phys = np.array([[ft_cv, ft_tafel, ft_xps, ft_raman, ft_xrd]], dtype=np.float32)
+            if hasattr(st.session_state.scaler_exp, "transform"):
+                phys_scaled = st.session_state.scaler_exp.transform(raw_phys).astype(np.float32).flatten()
+            else:
+                phys_scaled = raw_phys.flatten()
+
+            # 3. 关键张量拼接操作 (Strict Tensor Fusion Operation)
+            fp_tensor = torch.tensor(fp_arr, dtype=torch.float32).unsqueeze(0)
+            physical_tensor = torch.tensor(phys_scaled, dtype=torch.float32).unsqueeze(0)
+            fused_tensor = torch.cat([fp_tensor, physical_tensor], dim=1)  # (1, 2053)
+
+            # 4. 无物理表征基准张量 (物理特征使用零均值基准，即标准正态分布中心)
+            zero_phys_tensor = torch.zeros_like(physical_tensor)
+            baseline_tensor = torch.cat([fp_tensor, zero_phys_tensor], dim=1)
+
+            # 5. 模型前向推理微调 (调用 Stacking 模型)
+            stacking_model = st.session_state.stacking_ensemble
+            if not stacking_model.is_trained:
+                st.error("⚠️ 集成模型尚未训练，请先在正向预测页完成模型训练！")
+            else:
+                fused_np = fused_tensor.numpy()
+                baseline_np = baseline_tensor.numpy()
+
+                pred_fused = stacking_model.predict_single(fused_np)
+                pred_baseline = stacking_model.predict_single(baseline_np)
+
+                # 必须输出信息提示:
+                st.info("已融合 5 维宏观实验表征数据强化预测")
+
+                ft_life = pred_fused["Stacking_Pred"]
+                base_life = pred_baseline["Stacking_Pred"]
+                delta_life = ft_life - base_life
+                delta_pct = (delta_life / base_life * 100.0) if base_life > 0 else 0.0
+
+                # 核心微调卡片展示
+                col_c1, col_c2, col_c3 = st.columns(3)
+                with col_c1:
+                    st.metric(
+                        label="🔬 多模态微调后寿命",
+                        value=f"{ft_life:.1f} h",
+                        delta=f"{delta_life:+.1f} h ({delta_pct:+.1f}%)"
+                    )
+                with col_c2:
+                    st.metric(
+                        label="🧪 纯分子无物理基准",
+                        value=f"{base_life:.1f} h",
+                        help="仅依赖 2048 维化学分子拓扑指纹，5 维物理参数置为标准零均值时的基线预测寿命"
+                    )
+                with col_c3:
+                    gain_label = "显著增益 增强" if delta_life >= 0 else "衰减校准 惩罚"
+                    delta_color = "#16a34a" if delta_life >= 0 else "#dc2626"
+                    st.markdown(f"""
+                    <div style="background:#f8fafc; border:1px solid #cbd5e1; border-radius:8px; padding:8px 12px; text-align:center;">
+                        <span style="font-size:0.75rem; color:#64748b;">物理表征校准效应</span><br>
+                        <span style="font-size:1.25rem; font-weight:700; color:{delta_color};">{gain_label}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # 细分模型三路对比
+                st.markdown("##### ⚙️ 异构子模型微调前后对比")
+                df_sub_compare = pd.DataFrame({
+                    "推理引擎": ["Stacking 异构元集成", "PyTorch 深度流形 MLP (2053D)", "XGBoost 树模型 (32D SVD + 物理)"],
+                    "纯分子基线 (h)": [pred_baseline["Stacking_Pred"], pred_baseline["MLP_Pred"], pred_baseline["XGB_Pred"]],
+                    "微调强化寿命 (h)": [pred_fused["Stacking_Pred"], pred_fused["MLP_Pred"], pred_fused["XGB_Pred"]],
+                    "微调校准差值 (Δh)": [
+                        f"{pred_fused['Stacking_Pred'] - pred_baseline['Stacking_Pred']:+.1f}",
+                        f"{pred_fused['MLP_Pred'] - pred_baseline['MLP_Pred']:+.1f}",
+                        f"{pred_fused['XGB_Pred'] - pred_baseline['XGB_Pred']:+.1f}"
+                    ]
+                })
+                st.dataframe(df_sub_compare, use_container_width=True, hide_index=True)
+
+                # 雷达图展示 5 维物理参数的偏离度与增强图谱
+                st.markdown("##### 📊 5 维宏观电化学/光谱参数偏离度雷达图 (Z-Scores)")
+                z_scores = phys_scaled
+                categories = ["CV 峰面积", "Tafel 极化斜率", "XPS 结合能偏移", "Raman 拟合峰面积", "XRD (002)/(101)"]
+
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=list(z_scores) + [z_scores[0]],
+                    theta=categories + [categories[0]],
+                    fill='toself',
+                    fillcolor='rgba(13, 148, 136, 0.2)',
+                    line=dict(color='#0d9488', width=2),
+                    name='当前微调样本 (Z-Score)'
+                ))
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=[0, 0, 0, 0, 0, 0],
+                    theta=categories + [categories[0]],
+                    line=dict(color='#94a3b8', dash='dash', width=1.5),
+                    name='数据库平均基线 (Z=0)'
+                ))
+                fig_radar.update_layout(
+                    polar=dict(
+                        radialaxis=dict(visible=True, range=[-3, 3])
+                    ),
+                    showlegend=True,
+                    template="plotly_white",
+                    margin=dict(l=30, r=30, b=20, t=30),
+                    height=300
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+
+                # 张量拼接技术监视器
+                with st.expander("🔍 融合张量维度与内存流质检器 (Tensor Inspection)", expanded=False):
+                    st.code(f"""
+# 关键张量拼接日志
+fp_tensor.shape         : {tuple(fp_tensor.shape)} (2048 维 ECFP4 图拓扑指纹)
+physical_tensor.shape   : {tuple(physical_tensor.shape)} (5 维 Origin 宏观表征)
+fused_tensor.shape      : {tuple(fused_tensor.shape)} (2053 维多模态融合输入)
+PyTorch MLP 推理模式    : eval() | torch.no_grad() | CPU 内存安全模式
+                    """, language="python")
+
+
+# ==============================================================================
+# 11. Tab 4: 工业级高通量批处理筛选引擎 (High-Throughput Batch Screening)
+# ==============================================================================
+with tab4:
+    st.markdown("### 🏭 工业级高通量批处理筛选引擎 (High-Throughput Batch Screening)")
+    st.caption("支持成百上千候选分子库的高通量批量导入、智能列名自适应对齐、全向量化高维特征矩阵构建与极速单次前向推理。")
+
+    col_up, col_action = st.columns([16, 8], gap="medium")
+
+    with col_up:
+        uploaded_batch_file = st.file_uploader(
+            "📂 上传分子候选库文件 (支持 CSV / Excel .xlsx, .xls)",
+            type=["csv", "xlsx", "xls"],
+            key="uploader_batch_screening"
+        )
+
+    with col_action:
+        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+        btn_load_demo = st.button("⚡ 加载 20 组测试候选分子库", key="btn_load_demo_batch", use_container_width=True)
+
+    # 状态持久化管理
+    if "batch_df" not in st.session_state:
+        st.session_state.batch_df = None
+
+    if uploaded_batch_file is not None:
+        try:
+            if uploaded_batch_file.name.endswith(".csv"):
+                try:
+                    df_loaded = pd.read_csv(uploaded_batch_file)
+                except UnicodeDecodeError:
+                    uploaded_batch_file.seek(0)
+                    df_loaded = pd.read_csv(uploaded_batch_file, encoding="gbk")
+            else:
+                df_loaded = pd.read_excel(uploaded_batch_file)
+            st.session_state.batch_df = df_loaded
+            st.success(f"✅ 成功导入文件 `{uploaded_batch_file.name}`，共 `{len(df_loaded)}` 行数据。")
+        except Exception as e:
+            st.error(f"❌ 读取上传文件失败: {str(e)}")
+
+    if btn_load_demo:
+        default_csv = "/home/a1810/zn_battery_experiment_database.csv"
+        if os.path.exists(default_csv):
+            st.session_state.batch_df = pd.read_csv(default_csv)
+        else:
+            st.session_state.batch_df = MultimodalDataPipeline.generate_high_fidelity_benchmark_data()
+        st.success("⚡ 已成功加载内置 20 组水系锌电池候选添加剂基准分子库！")
+
+    df_current_batch = st.session_state.batch_df
+
+    if df_current_batch is not None and not df_current_batch.empty:
+        # 1. 自动识别包含 SMILES 的列 (不区分大小写)
+        smi_col_found = None
+        for col in df_current_batch.columns:
+            clean_c = str(col).strip().lower()
+            if any(k in clean_c for k in ["smiles", "canonical_smiles", "分子式", "结构式", "smi"]):
+                smi_col_found = col
+                break
+
+        if not smi_col_found:
+            st.error(f"❌ 未在上传表格中检测到包含 'SMILES' 的列名！请确保表格有一列命名为 'smiles'、'SMILES' 或 '结构式'。当前表格列为: `{list(df_current_batch.columns)}`")
+        else:
+            n_samples = len(df_current_batch)
+            st.markdown(f"**识别到分子结构列:** `{smi_col_found}` | **待测分子样本数:** `{n_samples}`")
+
+            with st.expander("📋 待筛选数据表预览 (前 5 行)", expanded=False):
+                st.dataframe(df_current_batch.head(5), use_container_width=True)
+
+            btn_do_screen = st.button("🚀 启动工业级全向量化批量筛选 (Vectorized Inference)", key="btn_do_batch_screening", type="primary", use_container_width=True)
+
+            if btn_do_screen:
+                stacking_model = st.session_state.stacking_ensemble
+                if not stacking_model.is_trained:
+                    st.error("⚠️ 集成模型尚未训练，请先在正向预测页完成模型训练！")
+                else:
+                    with st.spinner(f"正在全向量化提取 {n_samples} 组分子 ECFP4 图拓扑与宏观物理矩阵并执行推理..."):
+                        t_start = time.perf_counter()
+
+                        # A. 批量提取 2048 维 ECFP4 分子拓扑指纹 (严格使用全局 MorganGenerator 单例)
+                        fp_list = []
+                        valid_flags = []
+                        for smi in df_current_batch[smi_col_found].fillna(""):
+                            succ, fp, _ = MultimodalDataPipeline.extract_ecfp4_fingerprint(str(smi))
+                            if succ and fp is not None:
+                                fp_list.append(fp)
+                                valid_flags.append(True)
+                            else:
+                                fp_list.append(np.zeros(ECFP4_N_BITS, dtype=np.float32))
+                                valid_flags.append(False)
+
+                        X_mol_batch = np.array(fp_list, dtype=np.float32)  # (N, 2048)
+
+                        # B. 5 维物理参数自适应对齐与标准化缩放
+                        exp_batch_cols = []
+                        for k in EXP_FEATURE_KEYS:
+                            matched_col = None
+                            aliases = EXP_ALIASES.get(k, [])
+                            for c in df_current_batch.columns:
+                                c_clean = str(c).strip().lower()
+                                if c_clean in aliases or any(a in c_clean for a in aliases):
+                                    matched_col = c
+                                    break
+                            if matched_col:
+                                s = pd.to_numeric(df_current_batch[matched_col], errors="coerce")
+                                median_val = s.median()
+                                s_clean = s.fillna(median_val if not np.isnan(median_val) else 1.0).to_numpy(dtype=np.float32)
+                            else:
+                                # 若用户表格未包含该实验参数列，自适应填充训练集均值或默认基准值
+                                if hasattr(st.session_state.scaler_exp, "mean_") and st.session_state.scaler_exp.mean_ is not None:
+                                    idx_k = EXP_FEATURE_KEYS.index(k)
+                                    s_clean = np.full(n_samples, st.session_state.scaler_exp.mean_[idx_k], dtype=np.float32)
+                                else:
+                                    s_clean = np.full(n_samples, 1.0, dtype=np.float32)
+                            exp_batch_cols.append(s_clean)
+
+                        X_exp_raw = np.column_stack(exp_batch_cols).astype(np.float32)
+                        if hasattr(st.session_state.scaler_exp, "transform"):
+                            X_exp_scaled = st.session_state.scaler_exp.transform(X_exp_raw).astype(np.float32)
+                        else:
+                            X_exp_scaled = X_exp_raw
+
+                        # C. 拼接构成统一的 (N, 2053) 高维多模态融合特征矩阵
+                        X_fused_batch = np.column_stack([X_mol_batch, X_exp_scaled]).astype(np.float32)
+
+                        # D. 严格杜绝 for 循环！单次调用向量化前向推理：with torch.no_grad():
+                        with torch.no_grad():
+                            X_tensor = torch.tensor(X_fused_batch, dtype=torch.float32, device=BOTORCH_DEVICE)
+                            batch_preds = stacking_model.predict_batch(X_fused_batch)
+
+                        t_elapsed = time.perf_counter() - t_start
+                        throughput = n_samples / max(t_elapsed, 1e-6)
+
+                        # E. 结果整合与性能等级评定
+                        df_res = df_current_batch.copy()
+                        df_res["预测循环寿命_h"] = batch_preds["Stacking_Pred"]
+                        df_res["MLP深度网络_h"] = batch_preds["MLP_Pred"]
+                        df_res["XGBoost集成_h"] = batch_preds["XGB_Pred"]
+
+                        # 评定等级
+                        def assign_grade(row_idx):
+                            if not valid_flags[row_idx]:
+                                return "⚠️ 结构异常"
+                            life = batch_preds["Stacking_Pred"][row_idx]
+                            if life >= 1500.0:
+                                return "S级 (卓越/长寿命)"
+                            elif life >= 1100.0:
+                                return "A级 (优异/高稳定)"
+                            elif life >= 800.0:
+                                return "B级 (良好/标准级)"
+                            else:
+                                return "C级 (需优化/基础级)"
+
+                        df_res["性能等级"] = [assign_grade(i) for i in range(n_samples)]
+
+                        # 按预测循环寿命降序排序
+                        df_res = df_res.sort_values(by="预测循环寿命_h", ascending=False).reset_index(drop=True)
+                        df_res.insert(0, "综合排名", range(1, len(df_res) + 1))
+
+                        st.session_state.batch_screen_results = df_res
+                        st.session_state.batch_meta = {
+                            "n_samples": n_samples,
+                            "t_elapsed": t_elapsed,
+                            "throughput": throughput
+                        }
+
+            if "batch_screen_results" in st.session_state and st.session_state.batch_screen_results is not None:
+                df_res = st.session_state.batch_screen_results
+                meta = st.session_state.batch_meta
+
+                st.markdown("---")
+                st.markdown("#### 🏆 高通量全库筛选结果与综合排行榜")
+
+                # 指标看板
+                c_m1, c_m2, c_m3, c_m4 = st.columns(4)
+                with c_m1:
+                    st.metric("筛选分子总量", f"{meta['n_samples']} 个")
+                with c_m2:
+                    st.metric("单批推理耗时", f"{meta['t_elapsed']*1000:.1f} ms", f"{meta['throughput']:.0f} 分子/秒")
+                with c_m3:
+                    top_life = df_res["预测循环寿命_h"].max()
+                    st.metric("最高预测寿命", f"{top_life:.1f} h")
+                with c_m4:
+                    s_a_cnt = sum(df_res["预测循环寿命_h"] >= 1100.0)
+                    st.metric("S/A级候选占比", f"{(s_a_cnt / len(df_res) * 100):.1f}%", f"{s_a_cnt}/{len(df_res)} 个")
+
+                # 可视化分布图表
+                col_chart1, col_chart2 = st.columns([12, 12])
+                with col_chart1:
+                    fig_hist = px.histogram(
+                        df_res,
+                        x="预测循环寿命_h",
+                        color="性能等级",
+                        nbins=20,
+                        marginal="box",
+                        title="<b>候选库预测寿命分布直方图与箱线图</b>",
+                        labels={"预测循环寿命_h": "预测寿命 (h)"},
+                        color_discrete_map={
+                            "S级 (卓越/长寿命)": "#16a34a",
+                            "A级 (优异/高稳定)": "#0284c7",
+                            "B级 (良好/标准级)": "#eab308",
+                            "C级 (需优化/基础级)": "#dc2626",
+                            "⚠️ 结构异常": "#64748b"
+                        },
+                        template="plotly_white"
+                    )
+                    fig_hist.update_layout(margin=dict(l=20, r=20, b=20, t=40), height=320)
+                    st.plotly_chart(fig_hist, use_container_width=True)
+
+                with col_chart2:
+                    top_n = min(10, len(df_res))
+                    df_top = df_res.head(top_n).iloc[::-1]
+
+                    # 确定标签列 (若有添加剂名称则用名称，否则截断 SMILES)
+                    label_col = None
+                    for c in ["additive_name", "name", "Name", "分子名称", "添加剂名称"]:
+                        if c in df_top.columns:
+                            label_col = c
+                            break
+                    if label_col:
+                        labels = df_top[label_col].astype(str)
+                    else:
+                        labels = df_top[smi_col_found].astype(str).str.slice(0, 16) + "..."
+
+                    fig_bar = go.Figure(go.Bar(
+                        x=df_top["预测循环寿命_h"],
+                        y=labels,
+                        orientation='h',
+                        marker=dict(
+                            color=df_top["预测循环寿命_h"],
+                            colorscale='Viridis',
+                            showscale=False
+                        ),
+                        text=[f"{v:.1f} h" for v in df_top["预测循环寿命_h"]],
+                        textposition='inside'
+                    ))
+                    fig_bar.update_layout(
+                        title=f"<b>Top-{top_n} 明星候选分子排行榜 (前向寿命)</b>",
+                        xaxis=dict(title="预测循环寿命 (h)"),
+                        yaxis=dict(title="候选分子"),
+                        template="plotly_white",
+                        margin=dict(l=20, r=20, b=20, t=40),
+                        height=320
+                    )
+                    st.plotly_chart(fig_bar, use_container_width=True)
+
+                # 数据表格与导出
+                st.markdown("##### 📑 交互式高通量筛选排行榜")
+                st.dataframe(df_res, use_container_width=True)
+
+                csv_bytes = df_res.to_csv(index=False).encode("utf-8-sig")
+                st.download_button(
+                    label="📥 导出完整高通量筛选排行榜 (CSV 格式)",
+                    data=csv_bytes,
+                    file_name=f"ZnBattery_HighThroughput_Results_{time.strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv",
+                    key="btn_download_batch_csv"
+                )
+    else:
+        st.info("👈 请在上方上传分子候选库文件 (CSV / Excel)，或点击【⚡ 加载 20 组测试候选分子库】体验高通量批处理筛选。")
 
 
 
