@@ -1,0 +1,4 @@
+﻿timestamp,molecule_name,smiles,binder,coating_wt,concentration_mM,current_density_mA_cm2,measured_cycle_life_h,measured_overpotential_mV,notes
+2026-09-10 14:20:00,Thiourea,NC(=S)N,PVDF,1.2,15.0,2.0,1420.0,42.5,Observation #1: Compact epitaxial Zn (002) growth
+2026-09-12 11:05:30,Citric Acid,C(C(=O)O)C(CC(=O)O)(C(=O)O)O,CMC,1.5,10.0,2.0,1680.0,38.0,Observation #2: Chelation suppresses parasitic hydrogen evolution
+2026-09-15 16:45:12,Glycine,NCC(=O)O,PVDF,0.8,8.0,2.0,950.0,68.0,Observation #3: Baseline zwitterionic solvation buffer
