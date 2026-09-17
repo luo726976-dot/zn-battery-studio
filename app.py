@@ -6,7 +6,7 @@
 
 【顶刊方法学设计准则 (Nature Comm. / Adv. Mater. 标准)】:
 1. 化学特征高维化 (Morgan Fingerprints ECFP4 Integration):
-   - 摒弃仅有 5 维基础标量的浅层拟合，强制引入 RDKit AllChem.GetMorganFingerprintAsBitVect(mol, radius=2, nBits=2048)。
+   - 摒弃仅有 5 维基础标量的浅层拟合，强制引入 RDKit rdFingerprintGenerator.GetMorganGenerator(radius=2, fpSize=2048)。
    - 提取全面表征分子图局部空间拓扑、原子不变量与环系芳香性的 2048 维二进制 ECFP4 摩根指纹向量。
    - 5 维 Origin 物理实验特征 (CV, Tafel, XPS, Raman, XRD) 经独立 StandardScaler (Z-Score) 拟合后与指纹拼接，形成 (2048 + 5 = 2053) 维多模态输入。
 
@@ -58,7 +58,7 @@ import streamlit as st
 # RDKit 分子化学与高维指纹计算
 import rdkit
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Lipinski, Crippen, Draw, AllChem, DataStructs
+from rdkit.Chem import Descriptors, Lipinski, Crippen, Draw, AllChem, DataStructs, rdFingerprintGenerator
 from PIL import Image, ImageDraw
 
 warnings.filterwarnings("ignore")
@@ -231,6 +231,9 @@ EXP_ALIASES: Dict[str, List[str]] = {
 ECFP4_N_BITS = 2048
 ECFP4_RADIUS = 2
 SVD_MAX_COMPONENTS = 32
+
+# 全局单例 Morgan 指纹生成器 (O(1) 实例化，消除重复初始化开销与过时警告)
+mfpgen = rdFingerprintGenerator.GetMorganGenerator(radius=ECFP4_RADIUS, fpSize=ECFP4_N_BITS)
 
 # 聚合降维后的可解释性特征标识 (1 维拓扑子结构总和 + 5 维物理电化学特征)
 AGGREGATED_SHAP_FEATURE_NAMES = ["mol_Substructure_Topology"] + [f"exp_{k}" for k in EXP_FEATURE_KEYS]
@@ -474,9 +477,8 @@ class MultimodalDataPipeline:
             mol = Chem.MolFromSmiles(clean_smi)
             if mol is None:
                 return False, None, f"无法识别化学结构: 请检查价键闭合或元素大小写 ('{clean_smi}')"
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=n_bits)
-            arr = np.zeros((n_bits,), dtype=np.float32)
-            DataStructs.ConvertToNumpyArray(fp, arr)
+            generator = mfpgen if (radius == ECFP4_RADIUS and n_bits == ECFP4_N_BITS) else rdFingerprintGenerator.GetMorganGenerator(radius=radius, fpSize=n_bits)
+            arr = generator.GetFingerprintAsNumPy(mol).astype(np.float32)
             return True, arr, None
         except Exception as e:
             return False, None, f"ECFP4 指纹提取底层异常: {str(e)}"
@@ -492,9 +494,7 @@ class MultimodalDataPipeline:
             if mol is None:
                 return False, None, f"无法识别化学结构: 请检查价键闭合或元素大小写 ('{clean_smi}')"
             
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=ECFP4_RADIUS, nBits=ECFP4_N_BITS)
-            fp_arr = np.zeros((ECFP4_N_BITS,), dtype=np.float32)
-            DataStructs.ConvertToNumpyArray(fp, fp_arr)
+            fp_arr = mfpgen.GetFingerprintAsNumPy(mol).astype(np.float32)
 
             feats = {
                 "MolWt": float(round(Descriptors.MolWt(mol), 3)),
