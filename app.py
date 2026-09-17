@@ -2620,29 +2620,107 @@ with tab2:
     inv_c_left, inv_c_right = st.columns([10, 14], gap="medium")
 
     with inv_c_left:
-        st.markdown('<div class="section-title"><span>🧬 1. 目标添加剂分子拓扑与潜空间特征截取</span></div>', unsafe_allow_html=True)
-        
-        known_additives = list(st.session_state.local_db_df["additive_name"].dropna().unique())
-        if not known_additives:
-            known_additives = ["2-氨基-4-溴蒽醌-2-磺酸钠", "4,4'-二氟二苯甲酮", "甘氨酸", "聚乙烯醇 (PVA)"]
-        
-        inv_mol_choice = st.selectbox(
-            "选择目标研究添加剂体系：",
-            known_additives + ["自定义输入全新分子 SMILES"],
+        # 0. 固态涂层基底 / 粘结剂体系选择器 (Coating Matrix / Binder)
+        st.markdown('<div class="section-title"><span>🛡️ 1. 固态涂层基底 / 粘结剂体系 (Coating Matrix / Binder)</span></div>', unsafe_allow_html=True)
+        binder_options = [
+            "PVDF (聚偏氟乙烯)",
+            "CMC (羧甲基纤维素钠)",
+            "PTFE (聚四氟乙烯)",
+            "PVA (聚乙烯醇)",
+            "PAN (聚丙烯腈)",
+            "无涂层 (Bare Zn)"
+        ]
+        binder_choice = st.selectbox(
+            "选择涂层聚合物基底 / 电极粘结剂矩阵：",
+            binder_options,
             index=0,
-            key="inv_mol_choice"
+            key="select_binder_inv",
+            help="指定水系锌负极表面人工固态保护层聚合物基底或多孔骨架粘结剂体系"
         )
-        
-        if inv_mol_choice == "自定义输入全新分子 SMILES":
-            inv_smi_input = st.text_input("输入目标分子 SMILES 结构式：", value="Nc1c(S(=O)(=O)[O-])cc(Br)c2c1C(=O)c1ccccc1C2=O.[Na+]", key="inv_custom_smi")
-            inv_additive_name = "全新候选体系 X"
+
+        st.markdown('<div class="section-title" style="margin-top:14px;"><span>🧬 2. 目标添加剂分子拓扑与潜空间特征截取</span></div>', unsafe_allow_html=True)
+
+        input_mode_inv = st.radio(
+            "添加剂录入模式：",
+            ["① 从已有数据库选取", "② 自由输入全新候选物 X"],
+            index=0,
+            horizontal=True,
+            key="radio_input_mode_inv"
+        )
+
+        df_active = st.session_state.local_db_df
+        inv_default_smi = "Nc1c(S(=O)(=O)[O-])cc(Br)c2c1C(=O)c1ccccc1C2=O.[Na+]"
+        inv_default_name = "2-氨基-4-溴蒽醌-2-磺酸钠"
+
+        if input_mode_inv == "① 从已有数据库选取":
+            name_col = "additive_name" if "additive_name" in df_active.columns else df_active.columns[0]
+            substance_options_inv = df_active[name_col].dropna().astype(str).tolist()
+            if not substance_options_inv:
+                substance_options_inv = ["(数据库暂无历史物质)"]
+
+            prev_chosen_inv = st.session_state.get("selected_db_substance_inv", substance_options_inv[0])
+            sub_index_inv = substance_options_inv.index(prev_chosen_inv) if prev_chosen_inv in substance_options_inv else 0
+
+            chosen_substance_inv = st.selectbox(
+                "选择已有添加剂物质：",
+                substance_options_inv,
+                index=sub_index_inv,
+                key="selected_db_substance_inv"
+            )
+
+            if chosen_substance_inv in df_active[name_col].values:
+                sub_row_inv = df_active[df_active[name_col] == chosen_substance_inv].iloc[0]
+                inv_default_name = chosen_substance_inv
+
+                smi_col = st.session_state.col_map.get("SMILES", "smiles")
+                if smi_col in sub_row_inv:
+                    inv_default_smi = str(sub_row_inv[smi_col]).strip()
+                elif "smiles" in sub_row_inv:
+                    inv_default_smi = str(sub_row_inv["smiles"]).strip()
+
+                if st.session_state.get("inv_last_populated_substance") != chosen_substance_inv:
+                    st.session_state["inv_last_populated_substance"] = chosen_substance_inv
+                    st.session_state["smiles_box_inv"] = inv_default_smi
+                    st.session_state["inv_additive_name"] = inv_default_name
         else:
-            sub_rows = st.session_state.local_db_df[st.session_state.local_db_df["additive_name"] == inv_mol_choice]
-            if not sub_rows.empty:
-                inv_smi_input = str(sub_rows.iloc[0].get("smiles", "")).strip()
-            else:
-                inv_smi_input = "Nc1c(S(=O)(=O)[O-])cc(Br)c2c1C(=O)c1ccccc1C2=O.[Na+]"
-            inv_additive_name = inv_mol_choice
+            col_x1_inv, col_x2_inv = st.columns([3, 1])
+            with col_x1_inv:
+                candidate_chem_inv = st.text_input(
+                    "全新添加剂英文名称 / IUPAC / CAS 号：",
+                    value="4,4'-Difluorobenzophenone",
+                    key="text_cas_inv",
+                    help="支持输入国际化学通用英文名、IUPAC 学名或标准 CAS 号（例如 4,4'-Difluorobenzophenone 或 56-40-6）"
+                )
+                inv_default_name = candidate_chem_inv.strip() or "全新候选添加剂 X"
+                st.session_state["inv_additive_name"] = inv_default_name
+            with col_x2_inv:
+                st.write("")
+                st.write("")
+                btn_fetch_inv = st.button("🔍 智能补全", key="btn_fetch_inv", use_container_width=True, help="向 NCBI PubChem PUG REST API 发起在线结构检索")
+
+            if btn_fetch_inv:
+                with st.spinner(f"🌐 正在向 NCBI PubChem 检索 '{candidate_chem_inv}' 的分子拓扑..."):
+                    succ_pc, smi_pc, msg_pc = PubChemResolver.query_canonical_smiles(candidate_chem_inv)
+                    if succ_pc and smi_pc:
+                        st.session_state["smiles_box_inv"] = smi_pc
+                        st.session_state["inv_additive_name"] = candidate_chem_inv.strip()
+                        st.success(f"✅ {msg_pc}")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ {msg_pc}")
+
+        if "smiles_box_inv" not in st.session_state:
+            st.session_state["smiles_box_inv"] = inv_default_smi
+
+        if "inv_additive_name" not in st.session_state:
+            st.session_state["inv_additive_name"] = inv_default_name
+
+        inv_smi_input = st.text_input(
+            "SMILES 分子结构式：",
+            key="smiles_box_inv",
+            help="由已有库提取、PubChem 自动检索补全或在此直接手动修改"
+        )
+        inv_additive_name = st.session_state.get("inv_additive_name", inv_default_name)
 
         inv_smi_valid, inv_mol_feats, inv_smi_err = MultimodalDataPipeline.extract_rdkit_descriptors(inv_smi_input)
         
@@ -2772,6 +2850,13 @@ with tab2:
                         grid_res=24
                     )
                     
+                    # 构造复合体系标注 (粘结剂 + 目标添加剂)
+                    binder_prefix = binder_choice.split(" ")[0]
+                    if binder_choice == "无涂层 (Bare Zn)":
+                        system_recipe_label = f"Bare Zn + {inv_additive_name}"
+                    else:
+                        system_recipe_label = f"{binder_prefix} + {inv_additive_name}"
+
                     st.session_state.inv_opt_data = {
                         "inv_opt_res": inv_opt_res,
                         "W": W,
@@ -2779,6 +2864,8 @@ with tab2:
                         "M_grid": M_grid,
                         "S_grid": S_grid,
                         "target_name": inv_additive_name,
+                        "binder_name": binder_choice,
+                        "system_recipe_label": system_recipe_label,
                         "strategy": opt_strategy,
                         "mode": mode_flag
                     }
@@ -2789,7 +2876,7 @@ with tab2:
         if "inv_opt_data" in st.session_state:
             data = st.session_state.inv_opt_data
             res = data["inv_opt_res"]
-            t_name = data["target_name"]
+            t_name = data.get("system_recipe_label", data.get("target_name", "复合配方体系"))
             
             st.success(f"🎉 **BoTorch 潜空间逆向配方寻优成功！为【{t_name}】计算出下一轮全局最优实验配方：**")
             
